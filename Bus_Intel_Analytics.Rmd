@@ -1,0 +1,421 @@
+---
+title: "Business Intelligence and Analytics"
+author: "Noladad Consultants"
+client: "ABC Corp"
+date: "2024-08-05"
+output: pdf_document
+df_print: paged
+urlcolor: blue
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo=TRUE, 
+                      cache=FALSE, 
+                      fig.width=5, 
+                      fig.height=5,
+                      fig.align='center')
+r = function(x, digits=2){ round(x, digits=digits) }
+indent1 = '    '      
+indent2 = paste(rep(indent1, 2), collapse='')
+library(tidyverse)
+library(reshape2)
+library(magrittr)
+library(testthat)
+library(rstan)
+library(pdftools)
+library(writexl)
+```
+
+```{r}
+
+library(readr)
+
+file_path <- "E:/PSTAT 115/Personal_Project/Consolidated_Financial_Data.csv"
+consolidated_financial_df <- read_csv(file_path)
+
+print(head(consolidated_financial_df))
+print(str(consolidated_financial_df))
+
+```
+
+```{r}
+#install.packages("posterior")
+
+```
+
+```{r Stan/ MCMC}
+
+# Load necessary library
+library(cmdstanr)
+library(bayesplot)
+
+# Define the path to the Stan model file
+stan_code <- "E:/PSTAT 115/Personal_Project/BI_ROE_Data2.stan"
+
+# Compile the Stan model
+stan_model <- cmdstan_model(stan_code)
+
+# Prepare the data for Stan
+roe_data_list <- list(
+  N = nrow(consolidated_financial_df),
+  roe = consolidated_financial_df$ROE
+)
+
+# Fit the model using MCMC sampling
+fit <- stan_model$sample(
+  data = roe_data_list,
+  iter_sampling = 2000,
+  chains = 4,
+  parallel_chains = 4,  # Corrected spelling
+  refresh = 500
+)
+
+# Print summary of the posterior distribution
+fit_summary <- fit$summary()  # Added parentheses
+print(fit_summary)
+
+# diagnostic and plot results
+fit_summary <- fit$summary()
+print(fit_summary)
+
+#post_samp extraction
+posterior_draws <- fit$draws()
+
+# parameter trace plot
+mcmc_trace(posterior_draws, pars = c("mu", "sigma"))
+
+# Density plot for parameters
+mcmc_dens(posterior_draws, pars = c("mu", "sigma"))
+
+# Pair plot to see the relationships between parameters
+mcmc_pairs(posterior_draws, pars = c("mu", "sigma"))
+
+```
+
+```{r Posterior}
+# I wanted a better understanding about the slight malformation in the mu distribution.
+library(posterior)
+
+posterior_samples <- as_draws_df(fit$draws())
+
+ggplot(consolidated_financial_df, aes(x = ROE)) +
+  geom_histogram(binwidth = 1, fill = "blue", alpha = 0.5) +
+  labs(title = "Histogram of ROE Data", x = "ROE", y = "Frequency") + 
+  theme_minimal()
+
+prior_mu <- rnorm(10000, mean =0, sd = 10)
+posterior_mu <- posterior_samples$mu
+
+ggplot() + 
+  geom_density(aes(x = posterior_mu), color = "blue", linetype = "dashed", size = 1) + 
+  labs(title = "Prior vs Posterior for mu", x = "mu", y = "Density") + 
+  theme_minimal()
+
+boxplot(consolidated_financial_df$ROE, main = "Bloxplot of ROE Data")
+
+```
+
+```{r Credible Intervals}
+
+# Assuming fit_summary is a data frame or tibble
+# with columns for mean, q5 (5th percentile), and q95 (95th percentile)
+
+# Extract posterior means and credible intervals
+posterior_means <- fit_summary$mean
+posterior_credible_intervals <- data.frame(
+  variable = fit_summary$variable,  # assuming there is a 'variable' column
+  mean = fit_summary$mean,
+  lower = fit_summary$q5,
+  upper = fit_summary$q95
+)
+
+# Plot with ggplot2
+library(ggplot2)
+
+ggplot(posterior_credible_intervals, aes(x = variable, y = mean)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) + 
+  labs(title = "Posterior Means with Credible Intervals", x = "Parameter", y = "Mean") +
+  theme_minimal()
+
+
+```
+
+I will expand the Bayesian models at a later time to include:
+
+-   Adding more parameters or hierarchical structures
+
+-   Use mode comparison techniques like WAIC OR LOO-CV for the different
+    models
+
+-   Assess how well the models fit the data by generating and analyzing
+    posterior predictive distributions.
+
+My next objectives will be the following:
+
+-   Develop machine learning models, scaling and validating models like
+    Random Forests using the analyzed data.
+
+-   Financial analysis. I need to dive deeper into the financial
+    analysis, incorporating other financial metrics and applying
+    different statistical methods.
+
+-   Automate Data Processes. Refine and automate any data extraction or
+    preparation steps for scalability and reproducibility.
+
+Data Preparation: the data must be properly formatted with no missing
+values or inconsistencies.
+
+```{r}
+library(randomForest)
+library(caret)
+
+# Load the consolidated financial data.
+file_path <- "E:/PSTAT 115/Personal_Project/Consolidated_Financial_Data.csv"
+consolidated_financial_df <- read_csv(file_path)
+
+# First few rows of data
+print(head(consolidated_financial_df))
+print(str(consolidated_financial_df))
+
+# Check for missing values
+consolidated_financial_df <- consolidated_financial_df %>% mutate(across(everything(), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+# Select relevant features
+selected_features <- consolidated_financial_df %>% select(Profits, Sales, ROS, ROE, Leverage, Asset.Turnover, Cumulative.Profit)
+
+```
+
+Model Development: using the prepared data to develop a Random Forest
+model.
+
+```{r Random Forest Model}
+
+set.seed(42)
+train_index <- createDataPartition(selected_features$Profits, p = 0.8, list = FALSE)
+
+train_data <- selected_features[train_index, ]
+test_data <- selected_features[-train_index, ]
+
+print(dim(train_data))
+print(dim(test_data))
+
+#print(colnames(consolidated_financial_df))
+#print(colnames(train_data))
+# Remove leading and trailing spaces in column names if any
+#colnames(train_data) <- trimws(colnames(train_data))
+# Verify the cleaned column names
+#print(colnames(train_data))
+
+
+# Random Forest model
+rf_model <- randomForest(
+  formula = Profits ~ Sales + ROS + ROE + Leverage + Asset.Turnover + Cumulative.Profit, 
+  data = train_data,
+  ntree = 500,
+  importance = TRUE
+)
+
+print(rf_model)
+
+```
+
+### MODEL EVALUATION
+
+```{r}
+
+# Predict on the test set
+y_pred_rf <- predict(rf_model, test_data)
+
+# Calculate RMSE AND R^2 scores
+rmse_rf <- sqrt(mean((test_data$Profits - y_pred_rf)^2))
+r2_rf <- cor(test_data$Profits, y_pred_rf)^2
+
+# Cross-validation for robustness
+cv_model <- train(
+  Profits ~ Sales + ROS + ROE + Leverage + Asset.Turnover + Cumulative.Profit, 
+  data = train_data, 
+  method = "rf", 
+  trControl = cv_control
+)
+
+
+cv_scores_rf <- cv_model$results$Rsquared
+
+# Display model evaluation metrics
+print(paste("Random Forest RMSE:", rmse_rf))
+print(paste("Random Forest R^2:", r2_rf))
+print(paste("Cross-Validation R^2:", mean(cv_scores_rf)))
+
+# Test with a simpler model
+simple_model <- train(
+  Profits ~ Sales, 
+  data = train_data, 
+  method = "rf", 
+  trControl = cv_control
+)
+
+# Check the model summary
+print(simple_model)
+
+
+
+```
+
+SUMMARY Random Forest Model Performance:
+
+\% Var explained: The model explains 74.5% of the variance in the
+training data, which is a good indicator of model fit. RMSE (Root Mean
+Squared Error): The RMSE on the test set is approximately 21,001,784,
+which provides a sense of the model's prediction error. R²: The R² value
+on the test set is 0.9788, indicating that the model fits the test data
+quite well. Cross-Validation Results:
+
+Cross-Validation R²: The R² value from cross-validation is 0.7113,
+showing that the model's predictive power generalizes reasonably well to
+unseen data. Cross-Validation RMSE: The cross-validation RMSE is
+8,144,792, which is lower than the test set RMSE, suggesting some degree
+of over-fitting.
+
+OVERFITTING: Given the high R² values and the percentage of variance
+explained, My model seems to be performing well. However, the difference
+between the test set RMSE and cross-validation RMSE suggests I should
+investigate potential over-fitting.
+
+FINE-TUNING Fine-tune the mtry parameter to optimize the model's
+performance, specifying a range of mtry values in the train() function:
+
+```{r Tuning}
+
+#Tune the model, specifying a range of mtry values
+tune_grid <- expand.grid(mtry = 1:5)
+
+cv_model_tuned <- train(
+  Profits ~ Sales + ROS + ROE + Leverage + Asset.Turnover + Cumulative.Profit, 
+  data = train_data, 
+  method = "rf", 
+  trControl = cv_control,
+  tuneGrid = tune_grid
+)
+
+print(cv_model_tuned)
+
+```
+
+SUMMARY OF TUNING Optimal mtry: The optimal mtry value (number of
+predictors considered at each split) was found to be 2, which resulted
+in the lowest RMSE. Resampling Results: RMSE (Root Mean Squared Error):
+The RMSE decreases as mtry increases from 1 to 2, but it slightly
+increases as mtry goes beyond 2. R² (R-squared): The highest R² value is
+also observed when mtry is 2, indicating that this configuration
+explains the most variance in the data. MAE (Mean Absolute Error): The
+MAE is lowest when mtry is 2, reinforcing that this is the most accurate
+model configuration.
+
+### Hierarchical Normal Model
+
+```{r Hierarchical Normal Model}
+
+stan_code_file <- "E:/PSTAT 115/Personal_Project/BI_H_Norm_Model.stan"
+
+# compile the model
+stan_model_hier <- stan_model(file = stan_code_file)
+
+# data preparation for Stan
+N <- nrow(consolidated_financial_df)
+J <- length(unique(consolidated_financial_df$Company))
+company <- as.numeric(as.factor(consolidated_financial_df$Company))
+y <- consolidated_financial_df$ROE
+
+stan_data <- list(N = N, J = J, company = company, y = y)
+
+# fit the model
+fit_hier <- sampling(stan_model_hier, data = stan_data, iter = 2000, chains = 4)
+
+print(fit_hier)
+
+```
+Addressing the warnings:
+
+Warning: There were 163 divergent transitions after warmup. See
+https://mc-stan.org/misc/warnings.html#divergent-transitions-after-warmup
+to find out why this is a problem and how to eliminate them.
+Warning: Examine the pairs() plot to diagnose sampling problems
+
+Warning: The largest R-hat is 1.27, indicating chains have not mixed.
+Running the chains for more iterations may help. See
+https://mc-stan.org/misc/warnings.html#r-hat
+Warning: Bulk Effective Samples Size (ESS) is too low, indicating posterior means and medians may be unreliable.
+Running the chains for more iterations may help. See
+https://mc-stan.org/misc/warnings.html#bulk-ess
+Warning: Tail Effective Samples Size (ESS) is too low, indicating posterior variances and tail quantiles may be unreliable.
+Running the chains for more iterations may help. See
+https://mc-stan.org/misc/warnings.html#tail-ess
+
+```{r posterior predictive check}
+
+# Example with rstanarm (requires rstanarm package installed)
+library(rstanarm)
+
+# Fit a similar model with rstanarm
+fit_hier_rstanarm <- stan_glmer(ROE ~ (1 | Company), data = consolidated_financial_df, family = gaussian())
+
+# Generate posterior predictive samples
+y_rep <- posterior_predict(fit_hier_rstanarm)
+
+# Visualize posterior predictive checks
+ppc_dens_overlay(y = consolidated_financial_df$ROE, yrep = y_rep[1:50, ])
+
+
+```
+
+```{r}
+
+library(bayesplot)
+library(rstanarm)
+# Extract posterior samples as an array
+posterior_samples_array <- as.array(fit_hier)
+
+# Extract posterior samples as a matrix
+posterior_samples_matrix <- as.matrix(fit_hier)
+
+# Extract posterior samples
+#posterior_samples <- extract(fit_hier)
+
+# 1. Trace Plots
+mcmc_trace(as.array(fit_hier), pars = c("mu[1]", "sigma", "tau"))
+
+# 2. Posterior Density Plots
+mcmc_dens(as.array(fit_hier), pars = c("mu[1]", "sigma", "tau"))
+mcmc_dens(as.array(fit_hier), pars = c("mu[2]", "sigma", "tau"))
+mcmc_dens(as.array(fit_hier), pars = c("mu[3]", "sigma", "tau"))
+mcmc_dens(as.array(fit_hier), pars = c("mu[4]", "sigma", "tau"))
+mcmc_dens(as.array(fit_hier), pars = c("mu[5]", "sigma", "tau"))
+mcmc_dens(as.array(fit_hier), pars = c("mu[6]", "sigma", "tau"))
+# 3. Pairs Plot
+pairs(fit_hier, pars = c("mu[1]", "sigma", "tau"))
+pairs(fit_hier, pars = c("mu[2]", "sigma", "tau"))
+pairs(fit_hier, pars = c("mu[3]", "sigma", "tau"))
+pairs(fit_hier, pars = c("mu[4]", "sigma", "tau"))
+pairs(fit_hier, pars = c("mu[5]", "sigma", "tau"))
+pairs(fit_hier, pars = c("mu[6]", "sigma", "tau"))
+
+# 4. Posterior Predictive Checks
+# Assuming y is the observed data
+y_rep <- posterior_predict(fit_hier)
+ppc_dens_overlay(y = y, yrep = y_rep[1:50, ])
+
+# 5. R-hat Values
+mcmc_rhat(rhat(fit_hier))
+
+# 6. Effective Sample Size (ESS) Plots
+mcmc_neff(neff_ratio(fit_hier))
+
+
+
+```
+
